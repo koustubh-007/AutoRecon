@@ -9,9 +9,8 @@ def command_exists(command):
     return subprocess.call(f"type {command}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE) == 0
   
 def printResult(tool):
-    print("[+] Enter your sudo Passwd: ")
-    run_command("sudo su")
-   ins_cmds = {
+
+    ins_cmds = {
     "subfinder": "go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
     "assetfinder": "go install github.com/tomnomnom/assetfinder@latest",
     "sublist3r": "pip install git+https://github.com/aboul3la/Sublist3r.git",
@@ -26,7 +25,7 @@ def printResult(tool):
    }
 
     if command_exists(tool):
-      print(f"[+] {tool} is installed... ")
+        print(f"[+] {tool} is installed... ")
     else:
         print(f"[!] {tool} is not installed!")
         print(f"[+] Installing {tool} ...!")
@@ -35,8 +34,10 @@ def printResult(tool):
       
 
 print("[+] Checking if the Required Tools are installed or not!...")
+
 tools = ['subfinder', 'assetfinder', 'sublist3r', 'curl', 'amass', 'httpx', 'tee', 'waybackurls', 'gau', 'katana', 'nuclei']
 
-
 for tool in tools:
+    print("[+] Enter your sudo Passwd: ")
+    run_command("sudo su")
     printResult(tool)
