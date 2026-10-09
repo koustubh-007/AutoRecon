@@ -220,9 +220,40 @@ def process_domain(domain, out_of_scope_file=None):
 
 def main():
     # API mode is intentionally independent: it must not rerun general recon.
-    if "--api" in sys.argv[1:]:
-        return main_api(sys.argv[1:])
+    args = sys.argv[1:]
 
+    if not args or ( any( arg in ("-h", "--help") for arg in args) and "--api" not in args ):
+        print("""
+AutoRecon - Reconnaissance Toolkit
+
+Usage:
+  python autoRecon.py -d <domain>
+  python autoRecon.py -l <domains.txt>
+  python autoRecon.py --api <api.domains.txt>
+  python autoRecon.py -d <domain> -os <out_of_scope.txt>
+  python autoRecon.py -l <domains.txt> -os <out_of_scope.txt>
+  python autoRecon.py -dir <domain/folder>
+
+Options:
+  -d       Process a single domain
+  -l       Process a list of domains
+  --api    Run API reconnaissance independently
+  -os      Exclude domains listed in an out-of-scope file
+  -dir     Run directory search on the supplied target
+  -h       Show this help message
+  --help   Show this help message
+""")
+        return 0
+
+    # API mode is intentionally independent.
+    if "--api" in args:
+        api_index = args.index("--api")
+
+        if api_index != 0:
+            print("Error: --api must be the first argument.")
+            return 2
+
+        return main_api(args[1:])
     # Parse the optional project-wide out-of-scope list before any enumeration.
     args = sys.argv[1:]
     out_of_scope_file = None

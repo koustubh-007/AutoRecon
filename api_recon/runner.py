@@ -223,7 +223,17 @@ def _write_report(path, targets, spec_records, endpoints, validation):
 
 
 def run_api_recon(args):
-    targets, invalid = read_host_file(args.domains_file)
+
+    if not os.path.isfile(args.domains_file):
+        print(f"[!] API host file not found: {args.domains_file}")
+        return 2
+
+    try:
+        targets, invalid = read_host_file(args.domains_file)
+    except OSError as exc:
+        print(f"[!] Could not read API host file '{args.domains_file}': {exc}")
+        return 2
+
     if not targets:
         print("[!] No valid target hosts found in: " + args.domains_file, file=sys.stderr)
         return 2
@@ -339,7 +349,7 @@ def build_api_parser():
         prog="autorecon --api",
         description="Run API-only reconnaissance on selected, authorized API hosts.",
     )
-    parser.add_argument("--api", dest="domains_file", required=True, help="Text file containing selected API hostnames.")
+    parser.add_argument("domains_file", help="Text file containing selected API hostnames.")
     parser.add_argument("--scope", help="Optional file of explicitly authorized root domains; defaults to selected hosts.")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Output directory (default: results/api_recon).")
     parser.add_argument("--timeout", type=float, default=8.0, help="HTTP timeout in seconds (default: 8).")
