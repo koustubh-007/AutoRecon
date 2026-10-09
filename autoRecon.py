@@ -6,7 +6,7 @@ import sys
 # Resolve the project directory through symlinks such as /usr/bin/autorecon.
 PROJECT_DIR = os.path.dirname(os.path.realpath(__file__))
 VENV_PYTHON = os.path.join(PROJECT_DIR, ".venv", "bin", "python")
-if os.path.isfile(VENV_PYTHON) and os.path.realpath(sys.executable) != os.path.realpath(VENV_PYTHON):
+if os.path.isfile(VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.abspath(VENV_PYTHON):
     os.execv(VENV_PYTHON, [VENV_PYTHON, os.path.realpath(__file__), *sys.argv[1:]])
 
 if PROJECT_DIR not in sys.path:
