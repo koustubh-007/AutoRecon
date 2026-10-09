@@ -2,7 +2,20 @@
 
 API mode is separate from the existing general recon path. It loads the selected hosts, reads compatible local recon output files, discovers likely OpenAPI/Swagger documents, parses endpoint metadata, supplements routes from URL/JavaScript strings, and writes a normalized inventory.
 
-## Usage
+## General recon: out-of-scope filtering
+
+Use \`-os\` with a text file containing one excluded domain per line. Blank lines and lines beginning with \`#\` are ignored. Entries can be hostnames, URLs, or wildcard-prefixed domains such as \`*.staging.example.com\`.
+
+\`\`\`bash
+python autoRecon.py -d example.com -os out_of_Scope_domains.txt
+python autoRecon.py -l domains.txt -os out_of_Scope_domains.txt
+\`\`\`
+
+AutoRecon applies the exclusions when building \`all_subdomains.txt\`, before HTTP probing and URL collection. An excluded domain also excludes its subdomains. Matching uses hostname boundaries: excluding \`staging.example.com\` does not exclude \`notstaging.example.com\`.
+
+If the exclusion file is missing or unreadable, AutoRecon stops before enumeration rather than silently proceeding without the requested exclusions. The raw tool result files are retained for traceability; the filtered \`all_subdomains.txt\` is the list consumed by later stages.
+
+## API mode usage
 
 Run from the repository root:
 
