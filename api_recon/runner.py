@@ -144,6 +144,8 @@ def _safe_validation(endpoints, roots, timeout=6, max_requests=50):
     seen = set()
     for endpoint in endpoints:
         url = endpoint.get("url")
+        if endpoint.get("method") not in (None, "GET", "HEAD"):
+            continue
         if not url or not url_in_scope(url, roots) or url in seen:
             continue
         # Only validate URLs with a known concrete host. Do not invent query values
@@ -253,6 +255,12 @@ def run_api_recon(args):
             handle.write(message + "\n")
 
     _write_text(os.path.join(output, "api.domains.txt"), targets)
+    # Copy Phase 1 candidates when the input file lives beside them; never alter the source.
+    candidate_source = os.path.join(os.path.dirname(os.path.abspath(args.domains_file)), "api_candidates.txt")
+    if os.path.isfile(candidate_source):
+        _write_text(os.path.join(output, "api_candidates.txt"), _read_lines(candidate_source))
+    else:
+        _write_text(os.path.join(output, "api_candidates.txt"), targets)
     _write_text(os.path.join(output, "invalid_inputs.txt"),
                 ["domains.txt: line {line}: {value}".format(**item) for item in invalid] +
                 ["scope: line {line}: {value}".format(**item) for item in invalid_scope])
