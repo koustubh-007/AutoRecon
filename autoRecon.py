@@ -229,23 +229,21 @@ def main():
     if "-os" in args:
         os_index = args.index("-os")
         if os_index + 1 >= len(args) or args[os_index + 1].startswith("-"):
-            # -os is optional: if no file was supplied, continue without filtering.
-            print("[!] No out-of-scope file supplied after -os; continuing without exclusions.")
-            del args[os_index]
-        else:
-            requested_file = args[os_index + 1]
-            del args[os_index:os_index + 2]
-            if not os.path.isfile(requested_file):
-                print(f"[!] Out-of-scope file not found: {requested_file}")
-                print("[!] Continuing without out-of-scope filtering.")
-            else:
-                try:
-                    load_out_of_scope(requested_file)
-                    out_of_scope_file = requested_file
-                    print(f"[+] Out-of-scope filtering enabled: {requested_file}")
-                except OSError as exc:
-                    print(f"[!] Could not read out-of-scope file '{requested_file}': {exc}")
-                    print("[!] Continuing without out-of-scope filtering.")
+            print("[!] You specified -os but did not provide the out-of-scope .txt file.")
+            print("Usage: python autoRecon.py -d example.com -os out_of_Scope_domains.txt")
+            return 2
+        requested_file = args[os_index + 1]
+        del args[os_index:os_index + 2]
+        if not os.path.isfile(requested_file):
+            print(f"[!] Out-of-scope file not found: {requested_file}")
+            return 2
+        try:
+            load_out_of_scope(requested_file)
+            out_of_scope_file = requested_file
+            print(f"[+] Out-of-scope filtering enabled: {requested_file}")
+        except OSError as exc:
+            print(f"[!] Could not read out-of-scope file '{requested_file}': {exc}")
+            return 2
         sys.argv = [sys.argv[0]] + args
 
     # Check if a domain list was provided
