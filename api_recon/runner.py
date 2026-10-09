@@ -20,7 +20,19 @@ from .specs import discover_specs
 
 
 MAX_JS_BYTES = 2 * 1024 * 1024
-DEFAULT_OUTPUT = os.path.join("results", "api_recon")
+DEFAULT_OUTPUT = "."
+
+
+def _target_output_dir(output_base, target):
+    """Return the per-target API output directory beneath the chosen working base."""
+    return os.path.join(os.path.abspath(output_base), target, "api_recon")
+
+
+def _host_belongs_to_target(host, target):
+    """Match a target hostname and its subdomains on hostname boundaries."""
+    host = (host or "").lower().rstrip(".")
+    target = (target or "").lower().rstrip(".")
+    return bool(host and target and (host == target or host.endswith("." + target)))
 
 
 def _write_text(path, lines):
@@ -238,23 +250,46 @@ def run_api_recon(args):
         print("[!] No valid target hosts found in: " + args.domains_file, file=sys.stderr)
         return 2
 
+    # Run each selected host independently and keep its API report in
+    # <current-working-directory>/<host>/api_recon by default.
+    all_targets = getattr(args, "_all_targets", targets)
+    selected_target = getattr(args, "_target_host", None)
+    if selected_target is None and len(targets) > 1:
+        overall_status = 0
+        for target_host in targets:
+            target_args = argparse.Namespace(**vars(args))
+            target_args._all_targets = targets
+            target_args._target_host = target_host
+            status = run_api_recon(target_args)
+            if status != 0:
+                overall_status = status
+        return overall_status
+
+    target = selected_target or targets[0]
+    if target not in all_targets:
+        print("[!] Internal target selection error: " + target, file=sys.stderr)
+        return 2
+    targets = [target]
+
     if args.scope:
-        roots, invalid_scope = read_host_file(args.scope)
+        try:
+            roots, invalid_scope = read_host_file(args.scope)
+        except OSError as exc:
+            print(f"[!] Could not read scope file '{args.scope}': {exc}", file=sys.stderr)
+            return 2
         if not roots:
             print("[!] Scope file has no valid hostnames.", file=sys.stderr)
             return 2
     else:
-        # In the absence of a broader explicit program scope, selected hosts are
-        # the allowlist. Add --scope with the program's authorized root domains
-        # when related API hosts are explicitly in scope.
-        roots, invalid_scope = targets, []
+        # Keep all selected hosts in the allowlist while generating separate reports.
+        roots, invalid_scope = all_targets, []
 
-    outside = [host for host in targets if not host_in_scope(host, roots)]
+    outside = [host for host in all_targets if not host_in_scope(host, roots)]
     if outside:
         print("[!] These targets are not covered by --scope: " + ", ".join(outside), file=sys.stderr)
         return 2
 
-    output = os.path.abspath(args.output)
+    output = _target_output_dir(args.output, target)
     os.makedirs(output, exist_ok=True)
     os.makedirs(os.path.join(output, "logs"), exist_ok=True)
     log_path = os.path.join(output, "logs", "api_recon.log")
@@ -312,7 +347,11 @@ def run_api_recon(args):
     # Preserve only in-scope concrete URLs and endpoint hosts.
     endpoints = [item for item in endpoints if
                  (not item.get("url") or url_in_scope(item["url"], roots)) and
-                 (not item.get("host") or host_in_scope(item["host"], roots))]
+                 (not item.get("host") or host_in_scope(item["host"], roots)) and
+                 _host_belongs_to_target(
+                     item.get("host") or urlsplit(item.get("url") or "").hostname,
+                     target,
+                 )]
 
     with open(os.path.join(output, "api_endpoints.json"), "w", encoding="utf-8") as handle:
         json.dump(endpoints, handle, indent=2, ensure_ascii=False)
@@ -351,7 +390,7 @@ def build_api_parser():
     )
     parser.add_argument("domains_file", help="Text file containing selected API hostnames.")
     parser.add_argument("--scope", help="Optional file of explicitly authorized root domains; defaults to selected hosts.")
-    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Output directory (default: results/api_recon).")
+    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Base output directory (default: current working directory; each host uses <base>/<host>/api_recon).")
     parser.add_argument("--timeout", type=float, default=8.0, help="HTTP timeout in seconds (default: 8).")
     parser.add_argument("--max-spec-bytes", type=int, default=3145728, help="Maximum response size for a spec (default: 3 MiB).")
     parser.add_argument("--validate", action="store_true", help="Enable low-volume, non-mutating GET reachability checks.")

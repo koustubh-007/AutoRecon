@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 
-from api_recon.runner import _write_csv, _write_report, _write_text
+from api_recon.runner import _target_output_dir, _write_csv, _write_report, _write_text
 
 
 class ReportGenerationTests(unittest.TestCase):
@@ -12,6 +12,19 @@ class ReportGenerationTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
         self.output = self.temp_dir.name
+
+    def test_target_output_dir_uses_working_base_and_reuses_existing_folder(self):
+        base = os.path.join(self.output, "work")
+        existing_target = os.path.join(base, "api.example.com")
+        os.makedirs(existing_target)
+        marker = os.path.join(existing_target, "all_urls.txt")
+        with open(marker, "w", encoding="utf-8") as handle:
+            handle.write("https://api.example.com/users\\n")
+
+        output = _target_output_dir(base, "api.example.com")
+
+        self.assertEqual(output, os.path.join(existing_target, "api_recon"))
+        self.assertTrue(os.path.isfile(marker))
 
     def test_text_report(self):
         path = os.path.join(self.output, "api_endpoints.txt")

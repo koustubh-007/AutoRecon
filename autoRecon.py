@@ -1,6 +1,17 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 import sys
+
+# Resolve the project directory through symlinks such as /usr/bin/autorecon.
+PROJECT_DIR = os.path.dirname(os.path.realpath(__file__))
+VENV_PYTHON = os.path.join(PROJECT_DIR, ".venv", "bin", "python")
+if os.path.isfile(VENV_PYTHON) and os.path.realpath(sys.executable) != os.path.realpath(VENV_PYTHON):
+    os.execv(VENV_PYTHON, [VENV_PYTHON, os.path.realpath(__file__), *sys.argv[1:]])
+
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
 import dirsearch
 from api_recon.candidates import generate_api_candidates
 from api_recon.runner import main_api
@@ -210,7 +221,7 @@ def process_domain(domain, out_of_scope_file=None):
     try:
         api_candidates = generate_api_candidates(domain)
         print(f"[+] API host candidates saved to {domain}/api_candidates.txt ({len(api_candidates)} hosts)")
-        print(f"[+] Edit {domain}/api.domains.txt, then run: python autoRecon.py --api {domain}/api.domains.txt")
+        print(f"[+] Edit {domain}/api.domains.txt, then run: autorecon --api {domain}/api.domains.txt")
     except OSError as exc:
         print(f"[!] Could not generate API candidate files: {exc}")
 
@@ -322,7 +333,8 @@ Options:
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         print("\n[!] Keyboard Interrupt detected!")
         print("[+] Quitting!...")
+        sys.exit(130)

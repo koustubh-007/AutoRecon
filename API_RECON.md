@@ -18,7 +18,7 @@ source .venv/bin/activate
 
 If setup reports failures, fix those specific items and rerun `python3 setup.py`.
 
-API mode is separate from the existing general recon path. It loads the selected hosts, reads compatible local recon output files, discovers likely OpenAPI/Swagger documents, parses endpoint metadata, supplements routes from URL/JavaScript strings, and writes a normalized inventory.
+API mode is separate from the existing general recon path. Output paths are based on the directory from which you run `autorecon`, not the installation directory. It loads selected hosts, reads compatible local recon output files, discovers likely OpenAPI/Swagger documents, parses endpoint metadata, supplements routes from URL/JavaScript strings, and writes a normalized inventory.
 
 ## General recon: out-of-scope filtering
 
@@ -35,24 +35,21 @@ The `-os` option is optional. If the flag is omitted, recon runs normally withou
 
 ## API mode usage
 
-Run from the repository root:
+Run AutoRecon from the directory where you want target folders created. For example, if general recon created \`soundcloud.com/\` in your current directory, use its selected API-host list:
 
 \`\`\`bash
-python autoRecon.py --api example.com/api.domains.txt
+autorecon --api soundcloud.com/api.domains.txt
 \`\`\`
 
-Choose a custom output folder:
+For every selected host, API mode reuses or creates \`./<api-host>/\` and writes API-specific files under \`./<api-host>/api_recon/\`. The default output base is the current working directory; the script's installation directory does not affect output location.
+
+Choose a different output base explicitly if desired:
 
 \`\`\`bash
-python autoRecon.py --api example.com/api.domains.txt --output results/api_run_01
+autorecon --api soundcloud.com/api.domains.txt --output ./engagement-results
 \`\`\`
 
-When the project is installed as a package, the same commands can use the \`autorecon\` console entry point:
-
-\`\`\`bash
-python -m pip install -e .
-autorecon --api example.com/api.domains.txt --output results/api_run_01
-\`\`\`
+The custom base still contains one \`<api-host>/api_recon/\` directory per selected host.
 
 Optional broader authorized scope:
 
@@ -79,12 +76,12 @@ After the existing general recon finishes, AutoRecon writes:
 - \`<target>/api_candidates.txt\`: heuristic API-host candidates.
 - \`<target>/api.domains.txt\`: initialized from candidates only if the file does not already exist.
 
-Review and edit \`api.domains.txt\` before API mode. Rerunning general recon does not overwrite a previously edited selection file.
+Review and edit \`api.domains.txt\` before API mode. Rerunning general recon does not overwrite a previously edited selection file. Run API mode from the parent working directory containing your general-recon target folder; each selected API host receives its own \`<api-host>/api_recon/\` output folder in that working directory.
 
 ## API-mode output
 
 \`\`\`text
-results/api_recon/
+./<api-host>/api_recon/
 ├── api.domains.txt
 ├── api_candidates.txt
 ├── discovered_specs.json
