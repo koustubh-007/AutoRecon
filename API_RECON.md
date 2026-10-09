@@ -13,7 +13,7 @@ python autoRecon.py -l domains.txt -os out_of_Scope_domains.txt
 
 AutoRecon applies the exclusions when building \`all_subdomains.txt\`, before HTTP probing and URL collection. An excluded domain also excludes its subdomains. Matching uses hostname boundaries: excluding \`staging.example.com\` does not exclude \`notstaging.example.com\`.
 
-If the exclusion file is missing or unreadable, AutoRecon stops before enumeration rather than silently proceeding without the requested exclusions. The raw tool result files are retained for traceability; the filtered \`all_subdomains.txt\` is the list consumed by later stages.
+The `-os` option is optional. If the flag is omitted, recon runs normally without filtering. If `-os` is supplied without a path, or its path does not exist or cannot be read, AutoRecon prints an error and terminates before enumeration. The raw tool result files are retained for traceability; the filtered `all_subdomains.txt` is the list consumed by later stages when filtering is enabled.
 
 ## API mode usage
 
