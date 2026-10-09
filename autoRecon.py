@@ -4,6 +4,7 @@ import sys
 import dirsearch
 from api_recon.candidates import generate_api_candidates
 from api_recon.runner import main_api
+from api_recon.scope_filter import load_out_of_scope, filter_subdomains
 
 
 def command_exists(command):
@@ -22,7 +23,7 @@ def print_count(domain, command):
     print(f"[*] {command}: {count}")
 
 
-def process_domain(domain):
+def process_domain(domain, out_of_scope_file=None):
     print(f"[+] Processing domain: {domain}")
 
     # Create a directory for the domain's results
@@ -64,11 +65,40 @@ def process_domain(domain):
         f.write(crtsh_output)
     print_count(domain, 'crtsh')
 
-    # Combine all subdomains, sort and remove duplicates
+    # Combine raw enumerator output first; avoid including the previous aggregate file.
     print("[+] Combining subdomain results...")
-    combined_subdomains = run_command(f"cat {domain}/*.txt | sort -u | tee {domain}/all_subdomains.txt")
+    raw_files = [
+        f"{domain}/subfinder.txt",
+        f"{domain}/assetfinder.txt",
+        f"{domain}/sublist3r.txt",
+        f"{domain}/crtsh.txt",
+    ]
+    raw_subdomains = []
+    for result_file in raw_files:
+        if os.path.isfile(result_file):
+            with open(result_file, "r", encoding="utf-8", errors="replace") as handle:
+                raw_subdomains.extend(line.strip() for line in handle if line.strip())
 
-    print(f"[+] Found {len(combined_subdomains.splitlines())} unique subdomains.")
+    unique_subdomains = sorted(set(raw_subdomains))
+    excluded_domains = set()
+    if out_of_scope_file:
+        try:
+            excluded_domains = load_out_of_scope(out_of_scope_file)
+        except OSError as exc:
+            print(f"[!] Could not read out-of-scope file '{out_of_scope_file}': {exc}")
+            print("[!] Refusing to continue this target without applying the requested exclusions.")
+            return
+        before_count = len(unique_subdomains)
+        unique_subdomains = filter_subdomains(unique_subdomains, excluded_domains)
+        removed_count = before_count - len(unique_subdomains)
+        print(f"[+] Out-of-scope filtering removed {removed_count} subdomains.")
+        print(f"[+] Exclusion domains loaded: {len(excluded_domains)}")
+
+    with open(f"{domain}/all_subdomains.txt", "w", encoding="utf-8") as handle:
+        handle.write("".join(host + "\n" for host in unique_subdomains))
+    combined_subdomains = "\n".join(unique_subdomains)
+
+    print(f"[+] Found {len(unique_subdomains)} unique in-scope subdomains.")
     print(f"[+] Results saved to {domain}/all_subdomains.txt")
 
     # Check HTTP status codes using httpx
@@ -193,6 +223,27 @@ def main():
     if "--api" in sys.argv[1:]:
         return main_api(sys.argv[1:])
 
+    # Parse the optional project-wide out-of-scope list before any enumeration.
+    args = sys.argv[1:]
+    out_of_scope_file = None
+    if "-os" in args:
+        os_index = args.index("-os")
+        if os_index + 1 >= len(args) or args[os_index + 1].startswith("-"):
+            print("[!] -os requires a path to an out-of-scope domains file.")
+            print("Usage: python autoRecon.py -d example.com -os out_of_Scope_domains.txt")
+            return 2
+        out_of_scope_file = args[os_index + 1]
+        del args[os_index:os_index + 2]
+        if not os.path.isfile(out_of_scope_file):
+            print(f"[!] Out-of-scope file not found: {out_of_scope_file}")
+            return 2
+        try:
+            load_out_of_scope(out_of_scope_file)
+        except OSError as exc:
+            print(f"[!] Could not read out-of-scope file: {exc}")
+            return 2
+        sys.argv = [sys.argv[0]] + args
+
     # Check if a domain list was provided
     global mode, userInput
     if len(sys.argv) < 2:
@@ -223,7 +274,7 @@ def main():
 
 
     if mode == "-d":
-        process_domain(userInput)
+        process_domain(userInput, out_of_scope_file)
 
 
     if mode == "-l":
@@ -232,7 +283,8 @@ def main():
             domains = file.readlines()
         # Process each domain
         for domain in domains:
-            process_domain(domain.strip())
+            if domain.strip():
+                process_domain(domain.strip(), out_of_scope_file)
 
 
 if __name__ == "__main__":
