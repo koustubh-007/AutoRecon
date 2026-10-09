@@ -1,8 +1,10 @@
+import os
+import tempfile
 import unittest
 
 from api_recon.parser import parse_spec, extract_url_candidates
 from api_recon.scope import host_in_scope, normalize_host, url_in_scope
-from api_recon.scope_filter import filter_subdomains, is_out_of_scope
+from api_recon.scope_filter import filter_subdomains, is_out_of_scope, load_out_of_scope
 
 
 class ScopeTests(unittest.TestCase):
@@ -23,6 +25,14 @@ class ScopeTests(unittest.TestCase):
         self.assertTrue(is_out_of_scope("api.staging.example.com", excluded))
         self.assertFalse(is_out_of_scope("notstaging.example.com", excluded))
         self.assertFalse(is_out_of_scope("example.com", excluded))
+
+    def test_missing_out_of_scope_file_can_be_detected_without_exiting(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing_path = os.path.join(temp_dir, "missing.txt")
+            self.assertFalse(os.path.isfile(missing_path))
+            # CLI policy: a missing optional file leaves exclusions disabled.
+            excluded = set() if not os.path.isfile(missing_path) else load_out_of_scope(missing_path)
+            self.assertEqual(excluded, set())
 
     def test_filter_subdomains(self):
         excluded = {"staging.example.com", "old.example.org"}
