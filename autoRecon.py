@@ -2,6 +2,8 @@ import os
 import subprocess
 import sys
 import dirsearch
+from api_recon.candidates import generate_api_candidates
+from api_recon.runner import main_api
 
 
 def command_exists(command):
@@ -174,11 +176,23 @@ def process_domain(domain):
     print_count(domain, 'open_redirect')
     print(f"[+] Found potential open redirect vulnerable URLs in {domain}/open_redirect.txt")
 
+    # Generate API-host candidates without overwriting a previously edited selection file.
+    try:
+        api_candidates = generate_api_candidates(domain)
+        print(f"[+] API host candidates saved to {domain}/api_candidates.txt ({len(api_candidates)} hosts)")
+        print(f"[+] Edit {domain}/api.domains.txt, then run: python autoRecon.py --api {domain}/api.domains.txt")
+    except OSError as exc:
+        print(f"[!] Could not generate API candidate files: {exc}")
+
     print(f"[+] Completed processing for domain: {domain}")
     print("------------------------------------------")
 
 
 def main():
+    # API mode is intentionally independent: it must not rerun general recon.
+    if "--api" in sys.argv[1:]:
+        return main_api(sys.argv[1:])
+
     # Check if a domain list was provided
     global mode, userInput
     if len(sys.argv) < 2:
