@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Install AutoRecon's Kali/Linux command-line tools and Python dependencies.
+"""Bootstrap AutoRecon dependencies on Kali Linux / Debian-based Linux.
 
-Run from the repository root:
-    python3 setup.py
-
-This is an interactive environment bootstrapper, not a Python package build script.
-It creates .venv inside the repository, installs Python modules there, installs
-system packages through apt when needed, and installs Go tools into GOPATH/bin.
+Run from the repository root: python3 setup.py
+Creates .venv in this repository, installs Python modules into it, installs
+missing apt packages and Go tools, then prints a dependency status summary.
+This script installs dependencies only; it never launches reconnaissance.
 """
-
 from __future__ import annotations
 
 import os
@@ -18,16 +15,22 @@ import sys
 import venv
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / ".venv"
-VENV_PYTHON = VENV_DIR / "bin" / "python"
-GO_BIN = Path.home() / "go" / "bin"
+VENV_BIN = VENV_DIR / "bin"
+VENV_PYTHON = VENV_BIN / "python"
+GO_BIN = Path(os.environ.get("GOBIN") or (Path.home() / "go" / "bin"))
+REQUIREMENTS = ROOT / "requirements-api.txt"
 
 APT_PACKAGES = {
-    "curl": "curl",
-    "jq": "jq",
-    "tee": "coreutils",
+    "git": ("git", "git"),
+    "curl": ("curl", "curl"),
+    "jq": ("jq", "jq"),
+    "coreutils": ("tee", "tee"),
+    "python3": ("python3", "python3"),
+    "python3-venv": (None, "python3-venv"),
+    "python3-pip": (None, "python3-pip"),
+    "golang-go": ("go", "go"),
 }
 GO_TOOLS = {
     "subfinder": "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
@@ -38,191 +41,191 @@ GO_TOOLS = {
     "katana": "github.com/projectdiscovery/katana/cmd/katana@latest",
     "nuclei": "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
 }
-PYTHON_TOOLS = ("sublist3r", "dirsearch")
-OTHER_COMMANDS = ("git", "python3", "go")
+RESULTS = {}
 
 
-def run(command, *, env=None, check=False, capture=False):
-    """Run a command without shell interpolation."""
+def run(command, *, env=None, capture=False):
     try:
         return subprocess.run(
-            command,
-            cwd=ROOT,
-            env=env,
-            check=check,
-            text=True,
-            stdout=subprocess.PIPE if capture else None,
-            stderr=subprocess.PIPE if capture else None,
+            [str(part) for part in command], cwd=str(ROOT), env=env,
+            text=True, stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.PIPE if capture else None, check=False,
         )
     except OSError as exc:
         return subprocess.CompletedProcess(command, 127, "", str(exc))
 
 
-def command_exists(command):
-    return shutil.which(command) is not None
+def command_exists(name):
+    return shutil.which(name) is not None
 
 
-def sudo_available():
-    return os.geteuid() == 0 or command_exists("sudo")
+def installed_apt_package(package):
+    format_arg = "-f=" + "$" + "{Status}"
+    result = run(["dpkg-query", "-W", format_arg, package], capture=True)
+    return result.returncode == 0 and "install ok installed" in (result.stdout or "")
 
 
 def install_apt_packages(packages):
     if not packages:
         return True
-    if not sudo_available():
-        print("[!] Need root or sudo to install apt packages: " + ", ".join(packages))
+    prefix = [] if os.geteuid() == 0 else (["sudo"] if command_exists("sudo") else None)
+    if prefix is None:
+        print("[!] Root/sudo is required to install: " + ", ".join(packages))
         return False
-    prefix = [] if os.geteuid() == 0 else ["sudo"]
-    print("[*] Installing system packages: " + ", ".join(packages))
-    update = run(prefix + ["apt-get", "update"])
-    if update.returncode != 0:
+    print("\n[+] Updating apt package indexes...")
+    if run(prefix + ["apt-get", "update"]).returncode != 0:
         print("[!] apt-get update failed.")
         return False
-    result = run(prefix + ["apt-get", "install", "-y"] + packages)
-    return result.returncode == 0
+    print("[+] Installing missing packages: " + ", ".join(packages))
+    return run(prefix + ["apt-get", "install", "-y"] + packages).returncode == 0
+
+
+def ensure_system_packages():
+    print("\n=== System prerequisites ===")
+    missing = []
+    for package, (command, label) in APT_PACKAGES.items():
+        present = installed_apt_package(package) if command is None else command_exists(command)
+        if present:
+            RESULTS[label] = ("OK", "already available")
+        else:
+            missing.append(package)
+            RESULTS[label] = ("PENDING", "installing via apt")
+    install_apt_packages(missing)
+    for package in missing:
+        command, label = APT_PACKAGES[package]
+        present = installed_apt_package(package) if command is None else command_exists(command)
+        RESULTS[label] = ("INSTALLED" if present else "FAILED",
+                          "installed via apt" if present else "apt package unavailable")
 
 
 def ensure_venv():
+    print("\n=== Project Python environment ===")
+    print("[+] Virtual environment path: {}".format(VENV_DIR))
+    if VENV_DIR.exists() and not VENV_PYTHON.exists():
+        print("[!] .venv exists but is incomplete. Rename/remove it, then rerun setup.")
+        RESULTS["Python virtual environment"] = ("FAILED", "incomplete .venv")
+        return False
     if not VENV_PYTHON.exists():
-        print(f"[*] Creating project virtual environment: {VENV_DIR}")
-        venv.EnvBuilder(with_pip=True).create(VENV_DIR)
+        try:
+            venv.EnvBuilder(with_pip=True).create(str(VENV_DIR))
+            RESULTS["Python virtual environment"] = ("INSTALLED", str(VENV_DIR))
+        except Exception as exc:
+            RESULTS["Python virtual environment"] = ("FAILED", str(exc))
+            print("[!] Could not create .venv: {}".format(exc))
+            return False
     else:
-        print(f"[+] Reusing project virtual environment: {VENV_DIR}")
-    return VENV_PYTHON.exists()
+        RESULTS["Python virtual environment"] = ("OK", str(VENV_DIR))
+    return True
 
 
-def install_python_dependencies():
+def install_python_modules():
     if not ensure_venv():
-        return False
-    print("[*] Upgrading pip in project virtual environment...")
-    upgrade = run([str(VENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip"])
-    if upgrade.returncode != 0:
-        print("[!] Could not upgrade pip; continuing with dependency installation.")
-    requirements = ROOT / "requirements-api.txt"
-    if requirements.exists():
-        result = run([str(VENV_PYTHON), "-m", "pip", "install", "-r", str(requirements)])
-        if result.returncode != 0:
-            print("[!] Installing requirements-api.txt failed.")
-            return False
+        RESULTS["Python modules"] = ("FAILED", "virtual environment unavailable")
+        return
+    print("[+] Upgrading pip inside .venv...")
+    run([VENV_PYTHON, "-m", "pip", "install", "--upgrade", "pip"])
+    if REQUIREMENTS.exists():
+        command = [VENV_PYTHON, "-m", "pip", "install", "-r", REQUIREMENTS]
     else:
-        result = run([
-            str(VENV_PYTHON), "-m", "pip", "install", "requests>=2.31.0", "PyYAML>=6.0.1"
-        ])
-        if result.returncode != 0:
-            return False
+        command = [VENV_PYTHON, "-m", "pip", "install", "requests>=2.31.0", "PyYAML>=6.0.1"]
+    print("[+] Installing API-mode Python dependencies...")
+    ok = run(command).returncode == 0
 
-    # dirsearch's executable is invoked by the existing general-recon workflow.
-    for package in PYTHON_TOOLS:
-        if package == "sublist3r":
-            # The legacy package may fail on newer Python versions; report that explicitly.
-            check = run([str(VENV_PYTHON), "-m", "pip", "show", "sublist3r"], capture=True)
-            if check.returncode == 0:
-                print("[+] Python tool already installed: sublist3r")
-                continue
-            print("[*] Installing Sublist3r into .venv (legacy dependency; may not support every Python version)...")
-            result = run([
-                str(VENV_PYTHON), "-m", "pip", "install",
-                "git+https://github.com/aboul3la/Sublist3r.git"
-            ])
-            if result.returncode != 0:
-                print("[!] Sublist3r installation failed. Other setup steps will continue.")
-        elif package == "dirsearch":
-            if shutil.which(str(VENV_DIR / "bin" / "dirsearch")):
-                print("[+] Python tool already installed: dirsearch")
-                continue
-            print("[*] Installing dirsearch into .venv...")
-            result = run([str(VENV_PYTHON), "-m", "pip", "install", "dirsearch"])
-            if result.returncode != 0:
-                print("[!] dirsearch installation failed.")
-    return True
+    for package, executable in (
+        ("dirsearch", "dirsearch"),
+        ("git+https://github.com/aboul3la/Sublist3r.git", "sublist3r"),
+    ):
+        if (VENV_BIN / executable).exists():
+            print("[+] {} already installed.".format(executable))
+            continue
+        print("[+] Installing {} into .venv...".format(executable))
+        if run([VENV_PYTHON, "-m", "pip", "install", package]).returncode != 0:
+            print("[!] Could not install {}. See output above.".format(executable))
+            ok = False
+
+    check = run([VENV_PYTHON, "-c", "import requests, yaml; print('Python imports OK')"])
+    ok = ok and check.returncode == 0
+    RESULTS["Python modules"] = ("INSTALLED" if ok else "FAILED", str(VENV_DIR))
 
 
-def install_go_tool(name, module):
-    binary = GO_BIN / name
-    if command_exists(name) or binary.exists():
-        print(f"[+] {name} already installed.")
-        return True
+def ensure_go_path():
+    GO_BIN.mkdir(parents=True, exist_ok=True)
+    if str(GO_BIN) not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = str(GO_BIN) + os.pathsep + os.environ.get("PATH", "")
+    bashrc = Path.home() / ".bashrc"
+    line = 'export PATH="$PATH:$(go env GOPATH)/bin"'
+    try:
+        current = bashrc.read_text(encoding="utf-8") if bashrc.exists() else ""
+        if line not in current:
+            with bashrc.open("a", encoding="utf-8") as handle:
+                handle.write("\n# AutoRecon Go tools\n" + line + "\n")
+            print("[+] Added Go bin path to {}".format(bashrc))
+    except OSError as exc:
+        print("[!] Could not update {}: {}".format(bashrc, exc))
+
+
+def install_go_tools():
+    print("\n=== Go reconnaissance tools ===")
     if not command_exists("go"):
-        print(f"[!] Cannot install {name}: Go is not installed.")
-        return False
-    print(f"[*] Installing {name} with go install...")
-    env = os.environ.copy()
-    env["PATH"] = str(GO_BIN) + os.pathsep + env.get("PATH", "")
-    result = run(["go", "install", module], env=env)
-    if result.returncode != 0 or not binary.exists():
-        print(f"[!] Installation failed for {name}.")
-        return False
-    print(f"[+] Installed {name}: {binary}")
-    return True
+        for name in GO_TOOLS:
+            RESULTS[name] = ("FAILED", "Go is unavailable")
+        return
+    ensure_go_path()
+    for name, module in GO_TOOLS.items():
+        binary = GO_BIN / name
+        if command_exists(name) or binary.exists():
+            RESULTS[name] = ("OK", shutil.which(name) or str(binary))
+            print("[+] {} already installed.".format(name))
+            continue
+        print("[+] Installing {}...".format(name))
+        result = run(["go", "install", module])
+        if result.returncode == 0 and binary.exists():
+            RESULTS[name] = ("INSTALLED", str(binary))
+        else:
+            RESULTS[name] = ("FAILED", "go install failed; inspect output above")
+
+
+def print_summary():
+    print("\n" + "=" * 74)
+    print("AutoRecon setup summary")
+    print("=" * 74)
+    for name, (status, detail) in RESULTS.items():
+        print("[{:<9}] {:<27} {}".format(status, name, detail))
+    print("-" * 74)
+    print("Repository             : {}".format(ROOT))
+    print("Python virtualenv      : {}".format(VENV_DIR))
+    print("Virtualenv interpreter : {}".format(VENV_PYTHON))
+    print("Go binary directory    : {}".format(GO_BIN))
+    print("\nActivate with: source {}/bin/activate".format(VENV_DIR))
+    print("Then run: python autoRecon.py -h")
+    print("Amass is intentionally omitted because its enumeration step was removed.")
+    print("This setup script does not run any scans.")
 
 
 def main():
-    print("=" * 64)
-    print("AutoRecon setup — Kali Linux / Debian-based Linux")
-    print(f"Repository: {ROOT}")
-    print("=" * 64)
-
-    if not (ROOT / "autoRecon.py").exists():
-        print("[!] Run this script from a valid AutoRecon checkout.")
+    print("AutoRecon setup for Kali Linux / WSL2")
+    print("Repository: {}".format(ROOT))
+    if not sys.platform.startswith("linux") or not (ROOT / "autoRecon.py").is_file():
+        print("[!] Run this script from the root of your AutoRecon Linux checkout.")
         return 2
-    if not sys.platform.startswith("linux"):
-        print("[!] This setup script currently targets Kali/Linux.")
-        return 2
+    ensure_system_packages()
+    install_python_modules()
+    install_go_tools()
 
-    summary = {}
-    missing_apt = [package for command, package in APT_PACKAGES.items() if not command_exists(command)]
-    apt_ok = install_apt_packages(sorted(set(missing_apt))) if missing_apt else True
-    for command, package in APT_PACKAGES.items():
-        summary[command] = command_exists(command)
-        if not summary[command] and not apt_ok:
-            print(f"[!] {command} remains unavailable.")
+    os.environ["PATH"] = str(VENV_BIN) + os.pathsep + str(GO_BIN) + os.pathsep + os.environ.get("PATH", "")
+    for name in ("dirsearch", "sublist3r"):
+        path = shutil.which(name)
+        RESULTS[name] = ("OK", path) if path else ("FAILED", "executable not found in project .venv")
 
-    # The Go tools install into ~/go/bin by default. Add it to the current setup
-    # process and persist PATH for future interactive Bash sessions.
-    GO_BIN.mkdir(parents=True, exist_ok=True)
-    env_path = os.environ.get("PATH", "")
-    if str(GO_BIN) not in env_path.split(os.pathsep):
-        os.environ["PATH"] = str(GO_BIN) + os.pathsep + env_path
-
-    if command_exists("go"):
-        bashrc = Path.home() / ".bashrc"
-        path_line = 'export PATH="$PATH:$(go env GOPATH)/bin"'
-        try:
-            current = bashrc.read_text(encoding="utf-8") if bashrc.exists() else ""
-            if path_line not in current:
-                with bashrc.open("a", encoding="utf-8") as handle:
-                    handle.write("\n# AutoRecon Go tools\n" + path_line + "\n")
-                print(f"[+] Added Go binary directory to {bashrc}")
-        except OSError as exc:
-            print(f"[!] Could not update {bashrc}: {exc}")
-
-    python_ok = install_python_dependencies()
-    summary["Python venv + modules"] = python_ok
-
-    for name, module in GO_TOOLS.items():
-        summary[name] = install_go_tool(name, module)
-
-    for command in OTHER_COMMANDS:
-        summary[command] = command_exists(command)
-
-    # Re-check all commands after installations, including commands from .venv.
-    venv_bin = VENV_DIR / "bin"
-    os.environ["PATH"] = str(venv_bin) + os.pathsep + str(GO_BIN) + os.pathsep + os.environ.get("PATH", "")
-    for command in ("sublist3r", "dirsearch"):
-        summary[command] = command_exists(command)
-
-    print("\n" + "=" * 64)
-    print("AutoRecon setup summary")
-    print("=" * 64)
-    for name, ok in summary.items():
-        print(f"[{'OK' if ok else 'MISSING'}] {name}")
-    print(f"\nPython virtual environment: {VENV_DIR}")
-    print(f"Python interpreter: {VENV_PYTHON}")
-    print(f"Activate with: source {VENV_DIR}/bin/activate")
-    print("Go tools directory: " + str(GO_BIN))
-    print("\nNote: this setup does not install Amass; the current AutoRecon workflow removed it.")
-    print("Review any [MISSING] entries above before running reconnaissance.")
-    return 0 if all(summary.values()) else 1
+    print_summary()
+    failures = [name for name, (status, _detail) in RESULTS.items()
+                if status in ("FAILED", "PARTIAL", "PENDING")]
+    if failures:
+        print("\n[!] Setup completed with issues: " + ", ".join(failures))
+        print("[!] Fix the reported issues and rerun: python3 setup.py")
+        return 1
+    print("\n[+] All checked dependencies are available.")
+    return 0
 
 
 if __name__ == "__main__":
