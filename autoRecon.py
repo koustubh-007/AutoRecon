@@ -62,20 +62,6 @@ def process_domain(domain):
         f.write(crtsh_output)
     print_count(domain, 'crtsh')
 
-    # Enumerate subdomains using amass
-    if command_exists("amass"):
-        print("[+] Running amass with a 3-hour limit...")
-        output = run_command(f"timeout 3h amass enum -brute -active -d {domain}")
-        if output == "":
-            print("[!] amass timed out after 3 hours.")
-        else:
-            print("[+] Amass ran sucessfully!")
-        with open(f"{domain}/amass.txt", "w") as f:
-            f.write(output)
-        print_count(domain, 'amass')
-    else:
-        print("[!] amass not found!")
-
     # Combine all subdomains, sort and remove duplicates
     print("[+] Combining subdomain results...")
     combined_subdomains = run_command(f"cat {domain}/*.txt | sort -u | tee {domain}/all_subdomains.txt")
