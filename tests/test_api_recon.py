@@ -2,6 +2,7 @@ import unittest
 
 from api_recon.parser import parse_spec, extract_url_candidates
 from api_recon.scope import host_in_scope, normalize_host, url_in_scope
+from api_recon.scope_filter import filter_subdomains, is_out_of_scope
 
 
 class ScopeTests(unittest.TestCase):
@@ -15,6 +16,25 @@ class ScopeTests(unittest.TestCase):
         self.assertTrue(host_in_scope("example.com", ["example.com"]))
         self.assertFalse(host_in_scope("example.org", ["example.com"]))
         self.assertFalse(url_in_scope("https://outside.test/api/v1", ["example.com"]))
+
+    def test_out_of_scope_exact_and_subdomain_boundary(self):
+        excluded = {"staging.example.com"}
+        self.assertTrue(is_out_of_scope("staging.example.com", excluded))
+        self.assertTrue(is_out_of_scope("api.staging.example.com", excluded))
+        self.assertFalse(is_out_of_scope("notstaging.example.com", excluded))
+        self.assertFalse(is_out_of_scope("example.com", excluded))
+
+    def test_filter_subdomains(self):
+        excluded = {"staging.example.com", "old.example.org"}
+        result = filter_subdomains([
+            "www.example.com",
+            "staging.example.com",
+            "api.staging.example.com",
+            "old.example.org",
+            "notstaging.example.com",
+            "www.example.com",
+        ], excluded)
+        self.assertEqual(result, ["notstaging.example.com", "www.example.com"])
 
 
 class ParserTests(unittest.TestCase):
