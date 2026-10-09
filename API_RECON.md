@@ -1,5 +1,23 @@
 # AutoRecon API-only mode
 
+## Kali Linux / WSL2 setup
+
+From the cloned repository directory (normally `~/AutoRecon`), run:
+
+```bash
+python3 setup.py
+```
+
+The bootstrapper checks/installs required apt packages, creates the project-local `.venv`, installs Python dependencies and Python CLI tools into that environment, installs missing Go recon binaries, and prints a final status summary with the virtual environment path. It may ask for your sudo password when apt packages are missing. It does not run any recon scans. Amass is intentionally not installed because its enumeration step was removed.
+
+Activate the environment for later sessions:
+
+```bash
+source .venv/bin/activate
+```
+
+If setup reports failures, fix those specific items and rerun `python3 setup.py`.
+
 API mode is separate from the existing general recon path. It loads the selected hosts, reads compatible local recon output files, discovers likely OpenAPI/Swagger documents, parses endpoint metadata, supplements routes from URL/JavaScript strings, and writes a normalized inventory.
 
 ## General recon: out-of-scope filtering
