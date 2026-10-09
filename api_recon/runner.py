@@ -282,7 +282,7 @@ def run_api_recon(args):
 
     endpoints = []
     for item in parsed_specs:
-        endpoints.extend(parse_spec(item["document"], item["url"], item["file"]))
+        endpoints.extend(parse_spec(item["document"], item["url"], item["file"], roots))
     url_pairs = [(url, "existing recon URL inventory") for url in existing_urls]
     endpoints.extend(extract_url_candidates(url_pairs, roots))
     for js_url, text, source in js_sources:
