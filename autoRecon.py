@@ -1,7 +1,21 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 import sys
+
+# Resolve the project directory through symlinks such as /usr/bin/autorecon.
+PROJECT_DIR = os.path.dirname(os.path.realpath(__file__))
+VENV_PYTHON = os.path.join(PROJECT_DIR, ".venv", "bin", "python")
+if os.path.isfile(VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.abspath(VENV_PYTHON):
+    os.execv(VENV_PYTHON, [VENV_PYTHON, os.path.realpath(__file__), *sys.argv[1:]])
+
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
 import dirsearch
+from api_recon.candidates import generate_api_candidates
+from api_recon.runner import main_api
+from api_recon.scope_filter import load_out_of_scope, filter_subdomains
 
 
 def command_exists(command):
@@ -20,7 +34,7 @@ def print_count(domain, command):
     print(f"[*] {command}: {count}")
 
 
-def process_domain(domain):
+def process_domain(domain, out_of_scope_file=None):
     print(f"[+] Processing domain: {domain}")
 
     # Create a directory for the domain's results
@@ -62,11 +76,40 @@ def process_domain(domain):
         f.write(crtsh_output)
     print_count(domain, 'crtsh')
 
-    # Combine all subdomains, sort and remove duplicates
+    # Combine raw enumerator output first; avoid including the previous aggregate file.
     print("[+] Combining subdomain results...")
-    combined_subdomains = run_command(f"cat {domain}/*.txt | sort -u | tee {domain}/all_subdomains.txt")
+    raw_files = [
+        f"{domain}/subfinder.txt",
+        f"{domain}/assetfinder.txt",
+        f"{domain}/sublist3r.txt",
+        f"{domain}/crtsh.txt",
+    ]
+    raw_subdomains = []
+    for result_file in raw_files:
+        if os.path.isfile(result_file):
+            with open(result_file, "r", encoding="utf-8", errors="replace") as handle:
+                raw_subdomains.extend(line.strip() for line in handle if line.strip())
 
-    print(f"[+] Found {len(combined_subdomains.splitlines())} unique subdomains.")
+    unique_subdomains = sorted(set(raw_subdomains))
+    excluded_domains = set()
+    if out_of_scope_file:
+        try:
+            excluded_domains = load_out_of_scope(out_of_scope_file)
+        except OSError as exc:
+            print(f"[!] Could not read out-of-scope file '{out_of_scope_file}': {exc}")
+            print("[!] Refusing to continue this target without applying the requested exclusions.")
+            return
+        before_count = len(unique_subdomains)
+        unique_subdomains = filter_subdomains(unique_subdomains, excluded_domains)
+        removed_count = before_count - len(unique_subdomains)
+        print(f"[+] Out-of-scope filtering removed {removed_count} subdomains.")
+        print(f"[+] Exclusion domains loaded: {len(excluded_domains)}")
+
+    with open(f"{domain}/all_subdomains.txt", "w", encoding="utf-8") as handle:
+        handle.write("".join(host + "\n" for host in unique_subdomains))
+    combined_subdomains = "\n".join(unique_subdomains)
+
+    print(f"[+] Found {len(unique_subdomains)} unique in-scope subdomains.")
     print(f"[+] Results saved to {domain}/all_subdomains.txt")
 
     # Check HTTP status codes using httpx
@@ -174,11 +217,77 @@ def process_domain(domain):
     print_count(domain, 'open_redirect')
     print(f"[+] Found potential open redirect vulnerable URLs in {domain}/open_redirect.txt")
 
+    # Generate API-host candidates without overwriting a previously edited selection file.
+    try:
+        api_candidates = generate_api_candidates(domain)
+        print(f"[+] API host candidates saved to {domain}/api_candidates.txt ({len(api_candidates)} hosts)")
+        print(f"[+] Edit {domain}/api.domains.txt, then run: autorecon --api {domain}/api.domains.txt")
+    except OSError as exc:
+        print(f"[!] Could not generate API candidate files: {exc}")
+
     print(f"[+] Completed processing for domain: {domain}")
     print("------------------------------------------")
 
 
 def main():
+    # API mode is intentionally independent: it must not rerun general recon.
+    args = sys.argv[1:]
+
+    if not args or ( any( arg in ("-h", "--help") for arg in args) and "--api" not in args ):
+        print("""
+AutoRecon - Reconnaissance Toolkit
+
+Usage:
+  python autoRecon.py -d <domain>
+  python autoRecon.py -l <domains.txt>
+  python autoRecon.py --api <api.domains.txt>
+  python autoRecon.py -d <domain> -os <out_of_scope.txt>
+  python autoRecon.py -l <domains.txt> -os <out_of_scope.txt>
+  python autoRecon.py -dir <domain/folder>
+
+Options:
+  -d       Process a single domain
+  -l       Process a list of domains
+  --api    Run API reconnaissance independently
+  -os      Exclude domains listed in an out-of-scope file
+  -dir     Run directory search on the supplied target
+  -h       Show this help message
+  --help   Show this help message
+""")
+        return 0
+
+    # API mode is intentionally independent.
+    if "--api" in args:
+        api_index = args.index("--api")
+
+        if api_index != 0:
+            print("Error: --api must be the first argument.")
+            return 2
+
+        return main_api(args[1:])
+    # Parse the optional project-wide out-of-scope list before any enumeration.
+    args = sys.argv[1:]
+    out_of_scope_file = None
+    if "-os" in args:
+        os_index = args.index("-os")
+        if os_index + 1 >= len(args) or args[os_index + 1].startswith("-"):
+            print("[!] You specified -os but did not provide the out-of-scope .txt file.")
+            print("Usage: python autoRecon.py -d example.com -os out_of_Scope_domains.txt")
+            return 2
+        requested_file = args[os_index + 1]
+        del args[os_index:os_index + 2]
+        if not os.path.isfile(requested_file):
+            print(f"[!] Out-of-scope file not found: {requested_file}")
+            return 2
+        try:
+            load_out_of_scope(requested_file)
+            out_of_scope_file = requested_file
+            print(f"[+] Out-of-scope filtering enabled: {requested_file}")
+        except OSError as exc:
+            print(f"[!] Could not read out-of-scope file '{requested_file}': {exc}")
+            return 2
+        sys.argv = [sys.argv[0]] + args
+
     # Check if a domain list was provided
     global mode, userInput
     if len(sys.argv) < 2:
@@ -209,7 +318,7 @@ def main():
 
 
     if mode == "-d":
-        process_domain(userInput)
+        process_domain(userInput, out_of_scope_file)
 
 
     if mode == "-l":
@@ -218,12 +327,14 @@ def main():
             domains = file.readlines()
         # Process each domain
         for domain in domains:
-            process_domain(domain.strip())
+            if domain.strip():
+                process_domain(domain.strip(), out_of_scope_file)
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         print("\n[!] Keyboard Interrupt detected!")
         print("[+] Quitting!...")
+        sys.exit(130)
